@@ -1,139 +1,105 @@
+# main.py
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import random
+import torch.optim as optim
+from torch.utils.data import DataLoader
+import torchvision.transforms as transforms
+from torchvision.datasets import ImageFolder
+from epsilongreedy import PredRNN
+import numpy as np
+from PIL import Image
 
+# Transformations for image data
+transform = transforms.Compose([
+    transforms.Resize((64, 64)),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,), (0.5,))
+])
 
-class EpsilonGreedyLSTMCell(nn.Module):
-    def __init__(self, input_size, hidden_size, epsilon=0.1):
-        super(EpsilonGreedyLSTMCell, self).__init__()
-        self.hidden_size = hidden_size
-        self.epsilon = epsilon
-        
-        # Define LSTM gates
-        self.W_f = nn.Linear(input_size + hidden_size, hidden_size)
-        self.W_i = nn.Linear(input_size + hidden_size, hidden_size)
-        self.W_c = nn.Linear(input_size + hidden_size, hidden_size)
-        self.W_o = nn.Linear(input_size + hidden_size, hidden_size)
+# Load dataset
+dataset_dir = r'C:\Users\panse\Downloads\PredRNN\PredRNN\asl_dataset'
+dataset = ImageFolder(root=dataset_dir, transform=transform)
 
-    def epsilon_greedy_gate(self, gate_value):
-        """Applies epsilon-greedy policy to a gate."""
-        if random.random() < self.epsilon:
-            # Exploration: generate random gate values between 0 and 1
-            return torch.rand_like(gate_value)
-        else:
-            # Exploitation: use calculated gate values
-            return gate_value
+# Train and validation split
+train_size = int(0.8 * len(dataset))
+val_size = len(dataset) - train_size
+train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
 
-    def forward(self, x_t, hidden):
-        h_t, c_t = hidden
-        
-        # Concatenate input and hidden state
-        combined = torch.cat((h_t, x_t), dim=1)
+batch_size = 32
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-        # Calculate gate values
-        f_t = torch.sigmoid(self.W_f(combined))  # Forget gate
-        i_t = torch.sigmoid(self.W_i(combined))  # Input gate
-        o_t = torch.sigmoid(self.W_o(combined))  # Output gate
-        c_hat_t = torch.tanh(self.W_c(combined)) # Candidate cell state
+# Model and hyperparameters
+input_dim = 64 * 64 * 3
+hidden_dim = 256
+num_layers = 2
+output_dim = len(dataset.classes)
+learning_rate = 0.001
+num_epochs = 10
+epsilon = 0.2
 
-        # Apply epsilon-greedy policy to the gates
-        f_t = self.epsilon_greedy_gate(f_t)
-        i_t = self.epsilon_greedy_gate(i_t)
-        o_t = self.epsilon_greedy_gate(o_t)
+model = PredRNN(input_dim, hidden_dim, num_layers, output_dim, epsilon)
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
 
-        # Update the cell state
-        c_t = f_t * c_t + i_t * c_hat_t
+# Training loop
+for epoch in range(num_epochs):
+    model.train()
+    total_loss = 0
+    for batch_X, batch_y in train_loader:
+        batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+        batch_X = batch_X.view(batch_X.size(0), -1).unsqueeze(1)
 
-        # Update the hidden state
-        h_t = o_t * torch.tanh(c_t)
+        optimizer.zero_grad()
+        outputs = model(batch_X)
+        loss = criterion(outputs[:, -1, :], batch_y)
+        loss.backward()
+        optimizer.step()
 
-        return h_t, c_t
+        total_loss += loss.item()
 
-class EpsilonGreedyCNNLSTM(nn.Module):
-    def __init__(self, input_channels, num_classes, hidden_size, epsilon=0.1, epsilon_decay=0.99):
-        super(EpsilonGreedyCNNLSTM, self).__init__()
-        self.hidden_size = hidden_size
-        self.epsilon = epsilon
-        self.epsilon_decay = epsilon_decay
-        
-        # CNN layers for feature extraction from image data
-        self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
-        self.pool = nn.MaxPool2d(2, 2)
-        
-        # Flattening layer after CNN
-        self.flatten = nn.Flatten()
-        
-        # Fully connected layer before feeding to LSTM
-        self.fc = nn.Linear(64 * 8 * 8, hidden_size)  # assuming input image size is 32x32
-        
-        # LSTM cell with epsilon-greedy exploration
-        self.lstm = nn.LSTMCell(hidden_size, hidden_size)
-        
-        # Fully connected layer for classification
-        self.fc_out = nn.Linear(hidden_size, num_classes)
-        
-    def epsilon_greedy_gate(self, gate_value):
-        """Applies epsilon-greedy policy to a gate."""
-        if random.random() < self.epsilon:
-            # Exploration: replace gate value with random value
-            return torch.rand_like(gate_value)
-        else:
-            # Exploitation: use calculated gate value
-            return gate_value
-    
-    def forward(self, x, hidden):
-        # Pass through CNN layers
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = self.flatten(x)
-        
-        # Fully connected layer to reduce dimensionality
-        x = F.relu(self.fc(x))
-        
-        # Pass through LSTM with epsilon-greedy gates
-        hx, cx = hidden
-        hx, cx = self.lstm(x, (hx, cx))
-        
-        # Apply epsilon-greedy exploration to gates (including cell state)
-        forget_gate = self.epsilon_greedy_gate(torch.sigmoid(hx))  # Simulating a forget gate
-        input_gate = self.epsilon_greedy_gate(torch.sigmoid(hx))   # Simulating an input gate
-        output_gate = self.epsilon_greedy_gate(torch.sigmoid(hx))  # Simulating an output gate
-        
-        # Apply epsilon-greedy to cell state update as well
-        cx = forget_gate * cx + input_gate * torch.tanh(hx)
-        hx = output_gate * torch.tanh(cx)
-        
-        # Output layer for classification
-        output = self.fc_out(hx)
-        
-        return output, (hx, cx)
-    
-    def decay_epsilon(self):
-        """Decay epsilon after each episode."""
-        self.epsilon *= self.epsilon_decay
+    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {total_loss/len(train_loader):.4f}")
 
+# Evaluation on validation data
+model.eval()
+with torch.no_grad():
+    correct = 0
+    total = 0
+    for batch_X, batch_y in val_loader:
+        batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+        batch_X = batch_X.view(batch_X.size(0), -1).unsqueeze(1)
+        outputs = model(batch_X)
+        _, predicted = torch.max(outputs[:, -1, :], 1)
+        total += batch_y.size(0)
+        correct += (predicted == batch_y).sum().item()
 
+    print(f"Validation Accuracy: {100 * correct / total:.2f}%")
 
-# Example Usage:
-input_channels = 3  # for grayscale ASL images
-num_classes = 36  # 26 letters + 10 digits
-hidden_size = 128
-epsilon = 0.1
+# Save the model
+model_save_path = 'model.pt'
+torch.save(model.state_dict(), model_save_path)
+print(f"Model saved to {model_save_path}")
 
+# Prediction for a sample image
+def preprocess_image(image_path):
+    image = Image.open(image_path).convert('RGB')
+    image = transform(image)
+    image = image.unsqueeze(0)
+    return image
 
-###start
-# Initialize model
-model = EpsilonGreedyCNNLSTM(input_channels, num_classes, hidden_size, epsilon)
+image_path = r"C:\Users\panse\Downloads\PredRNN\PredRNN\asl_dataset\0\hand5_0_dif_seg_1_cropped.jpeg"
+image = preprocess_image(image_path).to(device)
+image = image.view(image.size(0), -1).unsqueeze(1)
 
-# Example random image input (assuming 32x32 grayscale images) and initial hidden state
-input_image = torch.randn(1, input_channels, 32, 32)  # Batch size 1, grayscale image
-hidden_state = (torch.zeros(1, hidden_size), torch.zeros(1, hidden_size))
+model = PredRNN(input_dim, hidden_dim, num_layers, output_dim, epsilon)
+model.load_state_dict(torch.load('model.pt'))
+model.eval()
 
-# Forward pass through the model
-output, (hx, cx) = model(input_image, hidden_state)
+with torch.no_grad():
+    outputs = model(image)
+    _, predicted = torch.max(outputs[:, -1, :], 1)
+    predicted_label = dataset.classes[predicted.item()]
 
-print("Output:", output)
-print("Final hidden state:", hx)
-print("Final cell state:", cx)
+print(f"Predicted ASL letter: {predicted_label}")
