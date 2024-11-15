@@ -1,0 +1,27 @@
+env: asl_env
+agent: ASLRNNAgent
+env_args:
+    data_path: "C:\\Users\\tanej\\OneDrive\\Desktop\\pymarl\\asl_dataset"  # Replace with the actual path to your ASL dataset
+    labels: ["A", "M", "N", "S", "T", "blank"]
+    img_size: [16, 16]  # Adjust based on preprocessing, if CNN expects different size
+episode_limit: 20  # Adjust as per training requirement for ASL sequences
+
+# Model parameters
+agent_type: "asl_rnn"       # Custom tag for easy tracking
+model:
+  rnn_hidden_dim: 128       # Adjust to match the GRU hidden layer size in ASLRNNAgent
+  n_actions: 36             # 36 actions corresponding to 26 letters + 10 digits in ASL
+  gamma: 0.99               # Discount factor for QMIX
+  learning_rate: 0.0005     # Learning rate
+
+# Training parameters
+batch_size: 16
+buffer_size: 1000           # Replay buffer size
+target_update_interval: 200 # Frequency of target network updates
+epsilon_start: 1.0
+epsilon_end: 0.05
+epsilon_decay: 0.995
+
+# CNN parameters
+cnn_type: "resnet18"        # For tracking if CNN architecture changes
+pretrained: True            # Use pretrained weights for ResNet, adjust if training from scratch
