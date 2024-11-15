@@ -3,6 +3,7 @@ import os
 import numpy as np
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
+import random
 
 # Using TensorFlow Keras utilities and models
 to_categorical = tf.keras.utils.to_categorical
@@ -12,7 +13,7 @@ Dense = tf.keras.layers.Dense
 TensorBoard = tf.keras.callbacks.TensorBoard
 
 # Path for the ASL dataset where .npy files are stored
-DATA_PATH = 'asl_dataset'  # Update this to your actual dataset path if different
+DATA_PATH = r'C:/Users/panse/OneDrive - vit.ac.in/Desktop/VIT/DL/asl_dataset'  # Update this to your actual dataset path if different
 
 # List of actions (labels) for the dataset
 actions = np.array([
@@ -82,14 +83,21 @@ model.add(Dense(actions.shape[0], activation='softmax'))  # Output layer with so
 # Compile the model
 model.compile(optimizer='Adam', loss='categorical_crossentropy', metrics=['categorical_accuracy'])
 
-# Fit the model on the training data
-model.fit(X_train, y_train, epochs=200, callbacks=[tb_callback])
+# Epsilon-greedy parameters
+epsilon = 0.1  # Exploration rate
+epsilon_decay = 0.99  # Decay for epsilon
+epsilon_min = 0.01  # Minimum epsilon value
 
-# Summarize the model structure
-model.summary()
+# Train the model with epsilon-greedy exploration
+for epoch in range(200):
+    print(f"Epoch {epoch+1}/200")
+    model.fit(X_train, y_train, epochs=1, batch_size=32, callbacks=[tb_callback], verbose=1)
+    
+    # Decrease epsilon over time
+    epsilon = max(epsilon_min, epsilon * epsilon_decay)
 
 # Save the model architecture and weights
 model_json = model.to_json()
-with open("model.json", "w") as json_file:
+with open("epsilon_model.json", "w") as json_file:
     json_file.write(model_json)
-model.save('model.h5')
+model.save('epsilon_model.h5')
